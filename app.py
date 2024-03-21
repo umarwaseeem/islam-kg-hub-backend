@@ -1,9 +1,12 @@
 from flask import Flask, request, jsonify
 from SPARQLWrapper import SPARQLWrapper, JSON
 from flask import jsonify
+from flask_cors import CORS
+
 
 app = Flask(__name__)
 
+CORS(app)
 
 repoURL = "http://192.168.10.7:7200/repositories/fyp-graph-db-1234"
 
