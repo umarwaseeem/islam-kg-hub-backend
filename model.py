@@ -24,7 +24,10 @@ model = T5ForConditionalGeneration.from_pretrained(model_name)
 
 
 def preprocess_function(examples):
-    inputs = ["translate English to SPARQL: " + q for q in examples["english_query"]]
+    inputs = [
+        "translate English to SPARQL: " + q
+        for q in examples["english_query"]
+        ]
     targets = [q for q in examples["sparql_query"]]
     model_inputs = tokenizer(
         inputs,
