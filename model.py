@@ -22,13 +22,27 @@ model_name = "t5-small"
 tokenizer = T5Tokenizer.from_pretrained(model_name)
 model = T5ForConditionalGeneration.from_pretrained(model_name)
 
+
 def preprocess_function(examples):
     inputs = ["translate English to SPARQL: " + q for q in examples["english_query"]]
     targets = [q for q in examples["sparql_query"]]
-    model_inputs = tokenizer(inputs, max_length=512, truncation=True, padding="max_length")
-    labels = tokenizer(targets, max_length=512, truncation=True, padding="max_length").input_ids
+    model_inputs = tokenizer(
+        inputs,
+        max_length=512,
+        truncation=True,
+        padding="max_length"
+        )
+
+    labels = tokenizer(
+        targets,
+        max_length=512,
+        truncation=True,
+        padding="max_length"
+        ).input_ids
+
     model_inputs["labels"] = labels
     return model_inputs
+
 
 tokenized_datasets = datasets.map(preprocess_function, batched=True)
 
@@ -60,11 +74,26 @@ tokenizer.save_pretrained("./sparql_t5_model")
 results = trainer.evaluate()
 print(results)
 
+
 # sample prediction
 def generate_sparql_query(english_query):
-    inputs = tokenizer("translate English to SPARQL: " + english_query, return_tensors="pt", max_length=512, truncation=True, padding="max_length")
-    outputs = model.generate(inputs.input_ids, max_length=512, num_beams=4, early_stopping=True)
+    inputs = tokenizer(
+        "translate English to SPARQL: " + english_query,
+        return_tensors="pt",
+        max_length=512,
+        truncation=True,
+        padding="max_length"
+        )
+
+    outputs = model.generate(
+        inputs.input_ids,
+        max_length=512,
+        num_beams=4,
+        early_stopping=True
+        )
+
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
 
 # Example usage
 example_query = "Who narrated the Hadith about prayer?"
