@@ -1,62 +1,41 @@
-from flask import Flask, jsonify
-from SPARQLWrapper import SPARQLWrapper, JSON
-from flask_cors import CORS
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from utils import createQuery, queryGraphDB
+
+app = FastAPI(
+    title="IslamKGHub Backend APIs",
+    description="This is the backend API for IslamKGHub",
+    version="1.0.0",
+    docs_url="/",
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-app = Flask(__name__)
+@app.get("/")
+def home():
+    return {"message": "IslamKGHub Backend APIs"}
 
-CORS(app)
+class QueryInput(BaseModel):
+    query: str
 
-repoURL = "http://192.168.10.7:7200/repositories/fyp-graph-db-1234"
-
-rawiName = "عبد الله بن يوسف@ar"
-
-
-def createQuery():
-
-    query = f"""
-    PREFIX : <http://www.semantichadith.com/ontology/>
-    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-    select (COUNT (?name) AS ?num)
-    where
-    {{
-        ?hadith rdf:type :Hadith .
-        ?hadith :hasNarratorChain ?o .
-        ?o :hasNarratorSegment	 ?x .
-        ?x :refersToNarrator+	 ?y .
-        ?y :name ?name
-
-    }}
-    VALUES (?name)
-    {{
-        ("{rawiName}")
-    }}
-    """
-
-    return query
-
-
-def queryGraphDB(query):
-    sparql = SPARQLWrapper(repoURL)
-    sparql.setQuery(query)
-    sparql.setReturnFormat(JSON)
-
-    results = sparql.query().convert()
-    return results["results"]["bindings"]
-
-
-# post route
-@app.route('/userQuery', methods=['GET'])
-def userQuery():
-    query = createQuery()
-    results = queryGraphDB(query)
+@app.post("/userQuery")
+def user_query(query_input: QueryInput):
+    query = query_input.query
+    print("🧍‍♂️ User Query: ", query, end="\n\n")
+    sparql_query = createQuery(query)
+    print("💬 SPARQL Query: ", sparql_query, end="\n\n")
+    results = queryGraphDB(sparql_query)
+    print("🚀 Results: ", results, end="\n\n")
     num = results[0]["num"]["value"]
     answer = f"Narrator has narrated {num} hadiths"
-    response = {
-        "response": answer
-    }
-    return jsonify(response)
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    return {"response": answer}
