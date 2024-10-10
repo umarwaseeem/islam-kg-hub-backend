@@ -1,103 +1,134 @@
-import pandas as pd
-from transformers import T5ForConditionalGeneration, T5Tokenizer
-from transformers import Trainer, TrainingArguments
-from datasets import Dataset, DatasetDict
+import nltk
+import spacy
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
 
+# Download necessary NLTK data
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
 
-data_pairs = pd.read_excel("dataset.xlsx")
+# Try to load spaCy model, use a flag if it's not available
+try:
+    nlp = spacy.load("en_core_web_sm")
+    spacy_available = True
+except IOError:
+    print("Warning: spaCy model 'en_core_web_sm' not found. Some features will be limited.")
+    spacy_available = False
 
-# Convert to pandas DataFrame
-df = pd.DataFrame(data_pairs)
+class NLPModel:
+    def __init__(self):
+        self.stop_words = set(stopwords.words('english'))
+        self.lemmatizer = WordNetLemmatizer()
+        self.analytics_keywords = ['how many', 'how much', 'count', 'number of']
+        self.subject_keywords = ['hadith', 'narration', 'saying', 'tradition']
 
-# Split data into train and validation sets
-train_df = df.sample(frac=0.8, random_state=42)
-val_df = df.drop(train_df.index)
+    def preprocess_text(self, text):
+        # Tokenize the text
+        tokens = word_tokenize(text.lower())
+        
+        # Remove stopwords and lemmatize
+        tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
+        
+        return tokens
 
-# Convert to Hugging Face datasets
-train_dataset = Dataset.from_pandas(train_df)
-val_dataset = Dataset.from_pandas(val_df)
-datasets = DatasetDict({"train": train_dataset, "validation": val_dataset})
+    def extract_entities(self, text):
+        if spacy_available:
+            doc = nlp(text)
+            entities = [(ent.text, ent.label_) for ent in doc.ents]
+        else:
+            # Fallback to a simple approach if spaCy is not available
+            tokens = self.preprocess_text(text)
+            entities = [(token, 'UNKNOWN') for token in tokens if token[0].isupper()]
+        return entities
 
-model_name = "t5-small"
-tokenizer = T5Tokenizer.from_pretrained(model_name)
-model = T5ForConditionalGeneration.from_pretrained(model_name)
+    def extract_query_info(self, user_query):
+        tokens = self.preprocess_text(user_query)
+        entities = self.extract_entities(user_query)
 
+        # Extract relevant information
+        narrator = None
+        count_hadith = False
+        analytics_question = False
+        subject = None
 
-def preprocess_function(examples):
-    inputs = [
-        "translate English to SPARQL: " + q
-        for q in examples["english_query"]
-        ]
-    targets = [q for q in examples["sparql_query"]]
-    model_inputs = tokenizer(
-        inputs,
-        max_length=512,
-        truncation=True,
-        padding="max_length"
-        )
+        # Check for analytics keywords
+        for keyword in self.analytics_keywords:
+            if keyword in user_query.lower():
+                analytics_question = True
+                break
 
-    labels = tokenizer(
-        targets,
-        max_length=512,
-        truncation=True,
-        padding="max_length"
-        ).input_ids
+        # Identify subject
+        for token in tokens:
+            if token in self.subject_keywords:
+                subject = token
+                break
 
-    model_inputs["labels"] = labels
-    return model_inputs
+        # Identify narrator and count_hadith
+        for i, token in enumerate(tokens):
+            if token in ['narrate', 'narrated', 'narrator']:
+                count_hadith = True
+                # Check the next token as a potential narrator
+                if i + 1 < len(tokens):
+                    narrator = tokens[i + 1]
+                break
 
+        # If narrator not found, check entities
+        if not narrator:
+            for entity, label in entities:
+                if label == 'PERSON' or (not spacy_available and self.is_potential_name(entity, user_query)):
+                    narrator = entity
+                    break
 
-tokenized_datasets = datasets.map(preprocess_function, batched=True)
+        return {
+            'narrator': narrator,
+            'count_hadith': count_hadith or analytics_question,
+            'subject': subject,
+            'analytics_question': analytics_question
+        }
 
-training_args = TrainingArguments(
-    output_dir="./results",
-    evaluation_strategy="epoch",
-    learning_rate=5e-5,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
-    num_train_epochs=3,
-    weight_decay=0.01,
-    logging_dir='./logs',
-)
+    def is_potential_name(self, word, context):
+        # Check if the word is capitalized (for non-Arabic/Urdu names)
+        if word[0].isupper():
+            return True
+        
+        # Check for common name indicators in the context
+        name_indicators = ['narrated by', 'reported by', 'according to']
+        for indicator in name_indicators:
+            if indicator + ' ' + word.lower() in context.lower():
+                return True
+        
+        return False
 
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=tokenized_datasets["train"],
-    eval_dataset=tokenized_datasets["validation"],
-)
+def build_sparql_query(query_info):
+    narrator = query_info['narrator']
+    count_hadith = query_info['count_hadith']
+    subject = query_info['subject']
+    analytics_question = query_info['analytics_question']
 
-trainer.train()
-
-# Save the model
-model.save_pretrained("./sparql_t5_model")
-tokenizer.save_pretrained("./sparql_t5_model")
-
-# evalute
-results = trainer.evaluate()
-print(results)
-
-
-# sample prediction
-def generate_sparql_query(english_query):
-    inputs = tokenizer(
-        "translate English to SPARQL: " + english_query,
-        return_tensors="pt",
-        max_length=512,
-        truncation=True,
-        padding="max_length"
-        )
-
-    outputs = model.generate(
-        inputs.input_ids,
-        max_length=512,
-        num_beams=4,
-        early_stopping=True
-        )
-
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
-# Example usage
-example_query = "Who narrated the Hadith about prayer?"
-print(generate_sparql_query(example_query))
+    if narrator and (count_hadith or analytics_question):
+        return f"""
+        PREFIX : <http://www.semantichadith.com/ontology/>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        SELECT (COUNT (?hadith) AS ?num)
+        WHERE {{
+            ?hadith rdf:type :Hadith .
+            ?hadith :hasNarratorChain ?o .
+            ?o :hasNarratorSegment ?x .
+            ?x :refersToNarrator+ ?y .
+            ?y :name ?name .
+            FILTER(REGEX(?name, "{narrator}", "i"))
+        }}
+        """
+    elif subject and analytics_question:
+        return f"""
+        PREFIX : <http://www.semantichadith.com/ontology/>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        SELECT (COUNT (?hadith) AS ?num)
+        WHERE {{
+            ?hadith rdf:type :Hadith .
+        }}
+        """
+    else:
+        return None

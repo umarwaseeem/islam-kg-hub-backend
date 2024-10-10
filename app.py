@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from queries import numOfNarrationsByNarrators, numOfNarrationsByRawi
 from utils import createQuery, queryGraphDB
 
 app = FastAPI(
@@ -30,12 +31,39 @@ class QueryInput(BaseModel):
 
 @app.post("/userQuery")
 def user_query(query_input: QueryInput):
+    
     query = query_input.query
-    print("🧍‍♂️ User Query: ", query, end="\n\n")
     sparql_query = createQuery(query)
-    print("💬 SPARQL Query: ", sparql_query, end="\n\n")
     results = queryGraphDB(sparql_query)
+    
+    print("🧍‍♂️ User Query: ", query, end="\n\n")
+    print("💬 SPARQL Query: ", sparql_query, end="\n\n")
     print("🚀 Results: ", results, end="\n\n")
-    num = results[0]["num"]["value"]
-    answer = f"Narrator has narrated {num} hadiths"
+    
+    if results:
+        num = results[0]["num"]["value"]
+        answer = f"Narrator has narrated {num} hadiths"
+    else:
+        answer = "Sorry, I couldn't find any information based on your query."
+    
     return {"response": answer}
+
+
+@app.post("/numOfNarrationsByNarrators")
+def num_of_narrations_by_narrators(limit: int):
+    sparql_query = numOfNarrationsByNarrators(limit)
+    graphResults = queryGraphDB(sparql_query)
+    response = []
+    for result in graphResults:
+        response.append({
+            "name": result["pname"]["value"],
+            "num": result["noofhadith"]["value"]
+        })
+    return {"response": response}
+
+@app.post("/numOfHadithsByNarrator")
+def num_of_narrations_by_narrators(name: str):
+    sparql_query = numOfNarrationsByRawi(name)
+    graphResults = queryGraphDB(sparql_query)
+    response =graphResults[0]["num"]["value"]
+    return {"response": response}
